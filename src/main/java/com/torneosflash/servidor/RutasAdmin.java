@@ -187,9 +187,23 @@ public class RutasAdmin {
             ctx.result("✅ Estado de " + targetUser + " reseteado a normal");
         });
 
-        // GET /check-ip (mostrar IP del servidor)
+        // GET /check-ip (mostrar IP del servidor y cliente)
         app.get("/check-ip", ctx -> {
-            ctx.result("IP del request: " + ctx.ip());
+            String clientIp = ctx.header("x-forwarded-for");
+            if (clientIp == null || clientIp.isEmpty()) clientIp = ctx.ip();
+            if ("0:0:0:0:0:0:0:1".equals(clientIp)) clientIp = "127.0.0.1 (Localhost)";
+            
+            String serverIp = "Desconocida";
+            try {
+                java.net.URL url = new java.net.URL("https://api.ipify.org");
+                java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(url.openStream()));
+                serverIp = in.readLine();
+                in.close();
+            } catch (Exception e) {
+                serverIp = "Error obteniendo IP: " + e.getMessage();
+            }
+            
+            ctx.result("IP del Cliente: " + clientIp + "\nIP Pública del Servidor: " + serverIp);
         });
     }
 }
