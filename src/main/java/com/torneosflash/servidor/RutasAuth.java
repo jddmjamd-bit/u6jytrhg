@@ -158,16 +158,16 @@ public class RutasAuth {
             }
 
             // Verificar en API de Clash
-            JsonObject apiResult = clashApi.verificarTag(tag);
-            if (apiResult != null) {
+            try {
+                JsonObject apiResult = clashApi.verificarTag(tag);
                 JsonObject res = new JsonObject();
                 res.addProperty("valid", true);
                 res.addProperty("name", apiResult.has("name") ? apiResult.get("name").getAsString() : "");
                 ctx.json(res);
-            } else {
+            } catch (Exception e) {
                 JsonObject res = new JsonObject();
                 res.addProperty("valid", false);
-                res.addProperty("error", "Tag no encontrado en Clash Royale");
+                res.addProperty("error", e.getMessage());
                 ctx.json(res);
             }
         });
