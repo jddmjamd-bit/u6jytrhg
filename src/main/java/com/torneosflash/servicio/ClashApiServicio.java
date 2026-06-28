@@ -118,32 +118,46 @@ public class ClashApiServicio {
 
     /**
      * Verifica si un player tag es válido consultando la API.
+     * @throws Exception Si la API de Clash devuelve un error, se lanza con el detalle.
      */
-    public JsonObject verificarTag(String tag) {
-        if (apiToken.isEmpty() || tag == null || tag.isEmpty()) return null;
+    public JsonObject verificarTag(String tag) throws Exception {
+        if (apiToken == null || apiToken.isEmpty()) {
+            throw new Exception("CLASH_ROYALE_API_TOKEN no está configurado en el servidor");
+        }
+        if (tag == null || tag.isEmpty()) {
+            throw new Exception("El tag proporcionado está vacío");
+        }
 
         String cleanTag = tag.toUpperCase().replace("#", "");
         String urlStr = "https://api.clashroyale.com/v1/players/%23" + cleanTag;
 
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestProperty("Authorization", "Bearer " + apiToken);
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        conn.setRequestProperty("Authorization", "Bearer " + apiToken.trim());
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(10000);
 
-            int code = conn.getResponseCode();
-            if (code != 200) return null;
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
-            reader.close();
-
-            return JsonParser.parseString(sb.toString()).getAsJsonObject();
-        } catch (Exception e) {
-            return null;
+        int code = conn.getResponseCode();
+        if (code != 200) {
+            InputStream errorStream = conn.getErrorStream();
+            if (errorStream != null) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+                throw new Exception("Error de Clash API (Código " + code + "): " + sb.toString());
+            } else {
+                throw new Exception("Error HTTP de Clash API (Código " + code + ")");
+            }
         }
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) sb.append(line);
+        reader.close();
+
+        return JsonParser.parseString(sb.toString()).getAsJsonObject();
     }
 }
