@@ -10,8 +10,11 @@ import com.torneosflash.servidor.*;
 import com.torneosflash.socketio.SocketIOServer;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
-
 import java.io.File;
+import io.javalin.json.JsonMapper;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import java.lang.reflect.Type;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -52,6 +55,12 @@ public class Main {
         // 3. SERVICIOS
         // ============================================
         ClashApiServicio clashApi = new ClashApiServicio(config.getClashApiToken());
+        if (clashApi.verificarConexionGlobal()) {
+            System.out.println("✅ Conectado a la API de Clash Royale.");
+        } else {
+            System.out.println("❌ Fallo al conectar a la API de Clash Royale. Revisa el log de errores.");
+        }
+
         CorreoServicio correo = new CorreoServicio(config.getGmailUser(), config.getGmailPass());
 
         // ============================================
@@ -63,6 +72,29 @@ public class Main {
         // 5. SERVIDOR HTTP (Javalin)
         // ============================================
         Javalin app = Javalin.create(javalinConfig -> {
+            // Aumentar límites de WebSocket a 50MB
+            javalinConfig.jetty.modifyWebSocketServletFactory(wsFactory -> {
+                wsFactory.setMaxTextMessageSize(50_000_000);
+                wsFactory.setMaxBinaryMessageSize(50_000_000);
+            });
+
+            // Configurar Gson como el Object Mapper oficial
+            Gson gson = new GsonBuilder().create();
+            javalinConfig.jsonMapper(new JsonMapper() {
+                @Override
+                public String toJsonString(Object obj, Type type) {
+                    if (obj instanceof com.google.gson.JsonElement) {
+                        return gson.toJson((com.google.gson.JsonElement) obj);
+                    }
+                    return gson.toJson(obj);
+                }
+
+                @Override
+                public <T> T fromJsonString(String json, Type targetType) {
+                    return gson.fromJson(json, targetType);
+                }
+            });
+
             // CORS
             javalinConfig.bundledPlugins.enableCors(cors -> {
                 cors.addRule(rule -> {
@@ -99,15 +131,16 @@ public class Main {
         // ============================================
         RutasAuth.register(app, usuarioDAO, db, config, clashApi);
         RutasFinanzas.register(app, db, config, socketServer);
-        RutasAdmin.register(app, usuarioDAO, db, config, socketServer);
+        RutasAdmin.register(app, usuarioDAO, db, socketServer);
         RutasSorteos.register(app, db, socketServer, correo);
         RutasLeaderboard.register(app, db, socketServer);
         RutasDbAdmin.register(app, db, config);
+        RutasMedia.register(app, db);
 
         // ============================================
         // 8. REGISTRAR SOCKET HANDLERS
         // ============================================
-        SocketHandler socketHandler = new SocketHandler(db, socketServer, clashApi, correo);
+        SocketHandler socketHandler = new SocketHandler(db, socketServer, clashApi);
         socketHandler.registrar();
 
         // ============================================

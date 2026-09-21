@@ -6,6 +6,31 @@ const isNativeApp = typeof window.Capacitor !== 'undefined';
 const API_BASE_URL = isNativeApp ? 'https://torneos-beta.onrender.com' : '';
 console.log(`📱 Modo: ${isNativeApp ? 'APP NATIVA' : 'WEB'}, API: ${API_BASE_URL || 'local'}`);
 
+window.abrirMediaModal = function(src, tipo) {
+    let lb = document.getElementById('media-lightbox');
+    if (!lb) {
+        lb = document.createElement('div');
+        lb.id = 'media-lightbox';
+        lb.className = 'media-lightbox';
+        lb.innerHTML = '<button class="lightbox-close" onclick="document.getElementById(\'media-lightbox\').style.display=\'none\'; document.body.style.overflow=\'\';">&times;</button><div class="lightbox-content" id="lightbox-content"></div>';
+        lb.onclick = function(e) {
+            if (e.target === lb) { lb.style.display = 'none'; document.body.style.overflow = ''; document.getElementById('lightbox-content').innerHTML = ''; }
+        };
+        document.body.appendChild(lb);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && lb.style.display === 'flex') { lb.style.display = 'none'; document.body.style.overflow = ''; document.getElementById('lightbox-content').innerHTML = ''; }
+        });
+    }
+    const cont = document.getElementById('lightbox-content');
+    if (tipo === 'video') {
+        cont.innerHTML = `<video src="${src}" class="lightbox-video" controls autoplay></video>`;
+    } else {
+        cont.innerHTML = `<img src="${src}" class="lightbox-img">`;
+    }
+    lb.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+};
+
 // --- FUNCIÓN GLOBAL DE VERIFICACIÓN DE SESIÓN (Accesible desde visibilitychange) ---
 async function verificarSesion(enterIfValid = true) {
     try {
@@ -26,6 +51,7 @@ async function verificarSesion(enterIfValid = true) {
             return data.user;
         }
     } catch (e) {
+        console.error(e);
         console.log("No hay sesión activa.");
     }
     return null;
@@ -161,43 +187,52 @@ document.addEventListener('DOMContentLoaded', () => {
         if (user) enterLobby(user);
     });
 
+    // --- TOAST NOTIFICATION IN-APP ---
+    window.mostrarToast = function(mensaje, duracion = 6000) {
+        // Crear o reusar contenedor de toasts
+        let container = document.getElementById('toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toast-container';
+            container.style.cssText = 'position:fixed;top:70px;right:10px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.style.cssText = 'background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:12px 20px;border-radius:10px;box-shadow:0 4px 15px rgba(0,0,0,0.3);font-size:14px;animation:slideIn 0.3s ease;max-width:280px;';
+        toast.innerHTML = mensaje;
+        container.appendChild(toast);
+
+        // Agregar animación si no existe
+        if (!document.getElementById('toast-styles')) {
+            const style = document.createElement('style');
+            style.id = 'toast-styles';
+            style.textContent = '@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}@keyframes slideOut{from{transform:translateX(0);opacity:1}to{transform:translateX(100%);opacity:0}}';
+            document.head.appendChild(style);
+        }
+
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, duracion);
+
+        return toast; // Retornar referencia al toast
+    };
+
     // Socket.IO - Conexión remota para app móvil, local para web
     try {
         socket = isNativeApp
-            ? io(API_BASE_URL, { transports: ['websocket', 'polling'], withCredentials: true })
-            : io({ transports: ['websocket', 'polling'], withCredentials: true });
+            ? io(API_BASE_URL, { transports: ['websocket'], withCredentials: true })
+            : io({ transports: ['websocket'], withCredentials: true });
 
-        // --- TOAST NOTIFICATION IN-APP ---
-        function mostrarToast(mensaje, duracion = 600000) {
-            // Crear o reusar contenedor de toasts
-            let container = document.getElementById('toast-container');
-            if (!container) {
-                container = document.createElement('div');
-                container.id = 'toast-container';
-                container.style.cssText = 'position:fixed;top:70px;right:10px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
-                document.body.appendChild(container);
+        // Auto-registrar al reconectar
+        socket.on('connect', () => {
+            console.log("🔌 Socket conectado/reconectado");
+            if (currentUser) {
+                console.log("🔄 Re-registrando usuario en el socket");
+                socket.emit('registrar_socket', currentUser);
             }
-
-            const toast = document.createElement('div');
-            toast.style.cssText = 'background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:12px 20px;border-radius:10px;box-shadow:0 4px 15px rgba(0,0,0,0.3);font-size:14px;animation:slideIn 0.3s ease;max-width:280px;';
-            toast.innerHTML = mensaje;
-            container.appendChild(toast);
-
-            // Agregar animación si no existe
-            if (!document.getElementById('toast-styles')) {
-                const style = document.createElement('style');
-                style.id = 'toast-styles';
-                style.textContent = '@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}@keyframes slideOut{from{transform:translateX(0);opacity:1}to{transform:translateX(100%);opacity:0}}';
-                document.head.appendChild(style);
-            }
-
-            setTimeout(() => {
-                toast.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => toast.remove(), 300);
-            }, duracion);
-
-            return toast; // Retornar referencia al toast
-        }
+        });
 
         // Almacenar toasts de búsqueda por userId para poder eliminarlos
         const toastsBusqueda = {};
@@ -235,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.on('buscando_activo', (data) => {
             console.log("🔄 Reconectado con búsqueda activa");
             if (typeof actualizarEstadoVisual === 'function') {
-                actualizarEstadoVisual('buscando', true);
+                actualizarEstadoVisual('buscando_partida', true);
             }
         });
 
@@ -550,6 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     usernameStatus.textContent = data.message;
                 } catch (e) {
+                    console.error(e);
                     usernameStatus.className = 'tag-status visible error';
                     usernameStatus.textContent = '⚠️ Error de conexión';
                     usernameValid = false;
@@ -587,6 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     emailStatus.textContent = data.message;
                 } catch (e) {
+                    console.error(e);
                     emailStatus.className = 'tag-status visible error';
                     emailStatus.textContent = '⚠️ Error de conexión';
                     emailValid = false;
@@ -631,6 +668,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         playerTagValid = false;
                     }
                 } catch (e) {
+                    console.error(e);
                     playerTagStatus.className = 'tag-status visible error';
                     playerTagStatus.textContent = '⚠️ Error de conexión';
                     playerTagValid = false;
@@ -639,7 +677,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (loginForm) loginForm.addEventListener('submit', async (e) => { e.preventDefault(); try { const res = await fetch(API_BASE_URL + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(loginForm))) }); const r = await res.json(); if (res.ok) { if (!r.user.tipo_suscripcion) r.user.tipo_suscripcion = 'free'; enterLobby(r.user); } else alert(r.error); } catch (e) { } });
+    if (loginForm) loginForm.addEventListener('submit', async (e) => { e.preventDefault(); try { const res = await fetch(API_BASE_URL + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(loginForm))) }); const r = await res.json(); if (res.ok) { if (!r.user.tipo_suscripcion) r.user.tipo_suscripcion = 'free'; enterLobby(r.user); } else alert(r.error); } catch (e) { console.error(e); } });
 
     if (registroForm) registroForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -676,6 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert('Error: ' + (data.error || 'Revisa los datos'));
             }
         } catch (e) {
+            console.error(e);
             alert('Error de conexión');
         }
     });
@@ -724,6 +763,11 @@ document.addEventListener('DOMContentLoaded', () => {
             actualizarEstadoVisual('partida_encontrada');
             ejecutarCambioVista('private', null);
             console.log("➡️ Navegando a private (partida_encontrada)");
+        }
+        else if (user.estado === 'buscando_partida') {
+            currentUser.estado = 'buscando_partida';
+            actualizarEstadoVisual('buscando_partida');
+            console.log("➡️ Restaurado estado visual: buscando_partida");
         }
         else {
             actualizarEstadoVisual('normal');
@@ -867,19 +911,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({
                         userId: currentUser.id,
                         username: currentUser.username,
-                        montoBase: monto
+                        monto: Number(monto)
                     })
                 });
+
+                if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.error || "Error al iniciar pago");
+                }
 
                 const datos = await res.json();
 
                 // 2. Configurar Widget
                 const checkout = new WidgetCheckout({
-                    currency: datos.moneda,
-                    amountInCents: datos.montoCentavos,
-                    reference: datos.referencia,
-                    publicKey: datos.llavePublica,
-                    signature: { integrity: datos.firma }, // ¡Seguridad!
+                    currency: "COP",
+                    amountInCents: datos.amountInCents,
+                    reference: datos.reference,
+                    publicKey: datos.publicKey,
+                    signature: { integrity: datos.signature }, // ¡Seguridad!
                     redirectUrl: window.location.href, // Opcional: A dónde vuelve al terminar
                 });
 
@@ -954,6 +1003,7 @@ document.addEventListener('DOMContentLoaded', () => {
         list.forEach(t => {
             const div = document.createElement('div');
             div.className = 'trans-item';
+            div.setAttribute('data-trans-id', t.id);
 
             // Definir color y tipo
             let colorMonto = t.tipo === 'retiro' ? '#ed4245' : '#43b581'; // Rojo si sale, Verde si entra
@@ -974,7 +1024,45 @@ document.addEventListener('DOMContentLoaded', () => {
             c.appendChild(div);
         });
     };
-    window.procesarTransaccionAdmin = async (id, act) => { if (!confirm(`¿${act}?`)) return; const res = await fetch(API_BASE_URL + '/api/admin/transaction/process', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transId: id, action: act }) }); const d = await res.json(); alert(d.message); cargarTransaccionesAdmin(); };
+    window.procesarTransaccionAdmin = async (id, act) => {
+        if (!confirm(`¿${act === 'approve' ? 'Aprobar' : 'Rechazar'} esta solicitud?`)) return;
+        // Deshabilitar botones de esta transacción mientras se procesa
+        const transItem = document.querySelector(`.trans-item[data-trans-id="${id}"]`);
+        if (transItem) {
+            transItem.querySelectorAll('button').forEach(b => b.disabled = true);
+        }
+        try {
+            const res = await fetch(API_BASE_URL + '/api/admin/transaction/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transId: id, action: act })
+            });
+            const d = await res.json();
+            if (d.error) {
+                alert('Error: ' + d.error);
+                if (transItem) transItem.querySelectorAll('button').forEach(b => b.disabled = false);
+                return;
+            }
+            // Eliminar la solicitud del DOM con animación
+            if (transItem) {
+                transItem.style.transition = 'opacity 0.3s, transform 0.3s';
+                transItem.style.opacity = '0';
+                transItem.style.transform = 'translateX(30px)';
+                setTimeout(() => {
+                    transItem.remove();
+                    // Si no quedan más solicitudes, mostrar mensaje vacío
+                    const container = document.getElementById('admin-transactions-list');
+                    if (container && container.children.length === 0) {
+                        container.innerHTML = '<p style="text-align:center;color:#bbb">Nada pendiente.</p>';
+                    }
+                }, 300);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Error de conexión');
+            if (transItem) transItem.querySelectorAll('button').forEach(b => b.disabled = false);
+        }
+    };
     // --- LÓGICA DISPUTAS ADMIN (CON CULPABLE) ---
     window.cargarDisputasAdmin = async () => {
         const res = await fetch(API_BASE_URL + '/api/admin/disputes');
@@ -1126,7 +1214,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fechaMsg = data.fecha ? new Date(data.fecha) : new Date(); const diaMsg = fechaMsg.toDateString();
         if (diaMsg !== lastDatePainted[canal]) { const sep = document.createElement('div'); sep.classList.add('date-separator'); sep.textContent = (diaMsg === new Date().toDateString()) ? "Hoy" : fechaMsg.toLocaleDateString(); contenedor.appendChild(sep); lastDatePainted[canal] = diaMsg; }
         const div = document.createElement('div'); div.classList.add('msg'); div.classList.add((currentUser && data.usuario === currentUser.username) ? 'own' : 'other');
-        let content = ''; if (data.tipo === 'imagen') content = `<img src="${data.texto}" class="chat-image" onclick="window.open(this.src)">`; else if (data.tipo === 'video') content = `<video src="${data.texto}" class="chat-video" controls></video>`; else {
+        let content = ''; if (data.tipo === 'imagen') content = `<img src="${data.texto}" class="chat-image" onclick="window.abrirMediaModal(this.src, 'imagen')">`; else if (data.tipo === 'video') content = `<video src="${data.texto}" class="chat-video" controls onclick="window.abrirMediaModal(this.src, 'video')"></video>`; else {
             // AQUÍ ESTÁ EL CAMBIO: Usamos la función convertirLinks
             content = `<span class="msg-text">${convertirLinks(data.texto)}</span>`;
         }
@@ -1141,7 +1229,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function setupChatForm(formId, inputId, canal) { const f = chatElements[canal].form; const i = chatElements[canal].input; if (f && i) { f.addEventListener('submit', (e) => { e.preventDefault(); if (i.value && currentUser) { socket.emit('mensaje_chat', { canal, usuario: currentUser.username, texto: i.value, tipo: 'texto' }); i.value = ''; } }); } }
     setupChatForm(null, null, 'general'); setupChatForm(null, null, 'clash');
 
-    const anuForm = chatElements.anuncios.form; if (anuForm) { anuForm.addEventListener('submit', (e) => { e.preventDefault(); const i = chatElements.anuncios.input; const fi = chatElements.anuncios.fileInput; const f = fi.files[0]; if (f && currentUser) { const r = new FileReader(); r.onload = (ev) => { const t = f.type.startsWith('video') ? 'video' : 'imagen'; socket.emit('mensaje_chat', { canal: 'anuncios', usuario: currentUser.username, texto: ev.target.result, tipo: t }); i.value = ''; fi.value = ''; }; r.readAsDataURL(f); } else if (i.value) { socket.emit('mensaje_chat', { canal: 'anuncios', usuario: currentUser.username, texto: i.value, tipo: 'texto' }); i.value = ''; } }); }
+    const anuForm = chatElements.anuncios.form; if (anuForm) { anuForm.addEventListener('submit', async (e) => { e.preventDefault(); const i = chatElements.anuncios.input; const fi = chatElements.anuncios.fileInput; const f = fi.files[0]; if (f && currentUser) { if (f.type.startsWith('video')) { /* === VIDEO: Subir por HTTP === */ const btn = anuForm.querySelector('button[type="submit"]'); const originalText = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Subiendo...'; try { const formData = new FormData(); formData.append('file', f); const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: formData, credentials: 'include' }); if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Error al subir video'); } const data = await res.json(); socket.emit('mensaje_chat', { canal: 'anuncios', usuario: currentUser.username, texto: data.url, tipo: 'video' }); i.value = ''; fi.value = ''; const fn = chatElements.anuncios.fileName; if (fn) { fn.classList.add('hidden'); fn.textContent = ''; } } catch (err) { alert('Error subiendo video: ' + err.message); } finally { btn.disabled = false; btn.textContent = originalText; } } else { /* === IMAGEN: Flujo actual Base64 === */ const r = new FileReader(); r.onload = (ev) => { socket.emit('mensaje_chat', { canal: 'anuncios', usuario: currentUser.username, texto: ev.target.result, tipo: 'imagen' }); i.value = ''; fi.value = ''; const fn = chatElements.anuncios.fileName; if (fn) { fn.classList.add('hidden'); fn.textContent = ''; } }; r.readAsDataURL(f); } } else if (i.value) { socket.emit('mensaje_chat', { canal: 'anuncios', usuario: currentUser.username, texto: i.value, tipo: 'texto' }); i.value = ''; } }); }
     // clash_pics UI was removed - this line cleaned up to prevent errors
 
     if (socket) {
@@ -1161,46 +1249,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         socket.on('error_busqueda', (m) => { alert(m); actualizarEstadoVisual('normal'); });
 
-        // Handler para reconexión con partida activa - navegar automáticamente al chat privado
-        socket.on('restaurar_partida', (data) => {
-            console.log("🔄 Restaurando partida:", data);
-            currentRoomId = data.salaId;
-            maxBetAllowed = data.maxApuesta;
-
-            // Limpieza
-            const privateMsgs = document.getElementById('private-messages');
-            if (privateMsgs) privateMsgs.innerHTML = '';
-
-            // Mostrar datos del rival
-            document.getElementById('rival-name').textContent = `VS ${data.rival.username}`;
-            document.getElementById('max-bet-info').textContent = `Tope: $${maxBetAllowed.toLocaleString()}`;
-
-            // Restaurar historial de chat privado
-            if (data.historial && data.historial.length > 0) {
-                data.historial.forEach(msg => {
-                    agregarBurbujaPrivada(msg);
-                });
-            }
-
-            // Configurar UI según estado
-            if (data.iniciado) {
-                // Partida ya iniciada - ir a resultado
-                actualizarEstadoVisual('jugando', true);
-                ejecutarCambioVista('game_result', null);
-            } else {
-                // En negociación - ir a chat privado
-                inputGameMode.value = '';
-                inputBetAmount.value = '';
-                inputGameMode.disabled = false;
-                inputBetAmount.disabled = false;
-                btnStartGame.textContent = "🎮 COMENZAR PARTIDA";
-                btnStartGame.disabled = true;
-                btnStartGame.classList.remove('enabled');
-
-                actualizarEstadoVisual('partida_encontrada', true);
-                ejecutarCambioVista('private', null);
-            }
-        });
 
         socket.on('partida_encontrada', (data) => {
             alert(`¡RIVAL ENCONTRADO!`);
@@ -1340,7 +1388,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Importante: Borrar cookie antes de redirigir para evitar loop de auto-login
             try {
                 await fetch(API_BASE_URL + '/api/logout', { method: 'POST' });
-            } catch (e) { }
+            } catch (e) { console.error(e); }
             // Redirigir al login
             window.location.href = window.location.origin + window.location.pathname + '?kicked=' + Date.now();
         });
@@ -1397,6 +1445,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 4. Activar botón
         if (btnStartGame) {
+            // No tocar el botón si estamos esperando confirmación del rival
+            if (btnStartGame.classList.contains('waiting-cancel')) return;
+
             if (error === "" && modo.length >= 3 && !isNaN(dinero)) {
                 btnStartGame.disabled = false;
                 btnStartGame.classList.add('enabled');
@@ -1412,19 +1463,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- ACTUALIZACIÓN DE SALDO EN VIVO ---
     socket.on('actualizar_saldo', (nuevoSaldo) => {
+        console.log("Socket event: actualizar_saldo recibida", nuevoSaldo);
         if (currentUser) currentUser.saldo = nuevoSaldo;
         if (userBalanceDisplay) userBalanceDisplay.textContent = '$' + nuevoSaldo;
+    });
+
+    socket.on('notificacion', (data) => {
+        console.log("Socket event: notificacion recibida", data);
+        if (data.mensaje) {
+            mostrarToast(data.mensaje, 5000);
+        }
     });
 
     // --- LÓGICA DOBLE CONFIRMACIÓN ---
     if (btnStartGame) {
         btnStartGame.addEventListener('click', () => {
             if (!currentUser) return;
+            
+            if (btnStartGame.textContent === "⏳ ESPERANDO AL RIVAL... (Click para cancelar)") {
+                socket.emit('cancelar_inicio');
+                btnStartGame.textContent = "🎮 COMENZAR PARTIDA";
+                btnStartGame.disabled = false;
+                btnStartGame.classList.remove('waiting-cancel');
+                btnStartGame.classList.add('enabled');
+                btnStartGame.style.backgroundColor = ""; // reset inline style
+                btnStartGame.style.pointerEvents = ""; // reset inline pointer-events
+                return;
+            }
+
             // Cambiar texto visualmente
-            btnStartGame.textContent = "⏳ ESPERANDO AL RIVAL...";
-            btnStartGame.disabled = true;
+            btnStartGame.textContent = "⏳ ESPERANDO AL RIVAL... (Click para cancelar)";
             btnStartGame.classList.remove('enabled');
-            btnStartGame.style.backgroundColor = "#faa61a"; // Amarillo
+            btnStartGame.classList.add('waiting-cancel');
+            btnStartGame.style.pointerEvents = "all";
 
             // Enviar voto
             socket.emit('iniciar_juego', {
@@ -1437,16 +1508,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- EVENTOS DE DOBLE CONFIRMACIÓN ---
     socket.on('esperando_inicio_rival', () => {
         if (btnStartGame) {
-            btnStartGame.textContent = "⏳ ESPERANDO AL RIVAL...";
-            btnStartGame.disabled = true;
-            btnStartGame.style.backgroundColor = "#faa61a"; // Amarillo
+            btnStartGame.textContent = "⏳ ESPERANDO AL RIVAL... (Click para cancelar)";
             btnStartGame.classList.remove('enabled');
+            btnStartGame.classList.add('waiting-cancel');
+            btnStartGame.style.pointerEvents = "all";
         }
     });
 
     socket.on('rival_listo_inicio', () => {
         // Si yo aún no he dado listo, me avisa
-        if (btnStartGame && btnStartGame.textContent !== "⏳ ESPERANDO AL RIVAL...") {
+        if (btnStartGame && btnStartGame.textContent !== "⏳ ESPERANDO AL RIVAL... (Click para cancelar)") {
             alert("¡Tu rival está listo! Dale a COMENZAR para iniciar.");
         }
     });
@@ -1457,8 +1528,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnStartGame) {
             btnStartGame.textContent = "🎮 COMENZAR PARTIDA";
             btnStartGame.disabled = false;
+            btnStartGame.classList.remove('waiting-cancel');
             btnStartGame.classList.add('enabled');
-            btnStartGame.style.backgroundColor = "#43b581";
+            btnStartGame.style.backgroundColor = "";
+            btnStartGame.style.pointerEvents = "";
         }
     });
 
@@ -1507,25 +1580,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Nombre del Rival
             const rivalObj = data.rival;
-            document.getElementById('rival-name').textContent = `VS ${rivalObj.username}`;
+            if (rivalObj) {
+                document.getElementById('rival-name').textContent = `VS ${rivalObj.username}`;
 
-            // 3. Calcular y Mostrar Estadísticas del Rival
-            let winRate = 0;
-            if (rivalObj.total_partidas > 0) {
-                winRate = Math.round((rivalObj.total_victorias / rivalObj.total_partidas) * 100);
+                // 3. Calcular y Mostrar Estadísticas del Rival
+                let winRate = 0;
+                if (rivalObj.total_partidas > 0) {
+                    winRate = Math.round((rivalObj.total_victorias / rivalObj.total_partidas) * 100);
+                }
+                const huidas = (rivalObj.salidas_chat || 0);
+
+                const statsBox = document.getElementById('rival-stats');
+                if (statsBox) {
+                    const colorWin = winRate >= 50 ? '#43b581' : '#ed4245';
+                    const colorFaltas = rivalObj.faltas > 0 ? '#ed4245' : '#bbb';
+
+                    statsBox.innerHTML = `
+                        <span style="color:${colorWin}" title="Win Rate">🏆 ${winRate}%</span>
+                        <span style="color:${colorFaltas}" title="Culpable en Disputas">💀 ${rivalObj.faltas || 0}</span>
+                        <span title="Huidas">🏃 ${huidas}</span>
+                    `;
+                }
             }
-            const huidas = (rivalObj.salidas_chat || 0);
 
-            const statsBox = document.getElementById('rival-stats');
-            if (statsBox) {
-                const colorWin = winRate >= 50 ? '#43b581' : '#ed4245';
-                const colorFaltas = rivalObj.faltas > 0 ? '#ed4245' : '#bbb';
-
-                statsBox.innerHTML = `
-                    <span style="color:${colorWin}" title="Win Rate">🏆 ${winRate}%</span>
-                    <span style="color:${colorFaltas}" title="Culpable en Disputas">💀 ${rivalObj.faltas || 0}</span>
-                    <span title="Huidas">🏃 ${huidas}</span>
-                `;
+            // Restaurar chat privado
+            const privateMsgs = document.getElementById('private-messages');
+            if (privateMsgs) privateMsgs.innerHTML = '';
+            if (data.historial && data.historial.length > 0) {
+                data.historial.forEach(msg => {
+                    agregarBurbuja(msg, privateMsgs, 'privado');
+                });
             }
 
             // 4. Restaurar Estado de la UI
@@ -1537,11 +1621,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnStartGame.disabled = true;
                 btnStartGame.classList.remove('enabled');
             } else {
-                // Si estamos negociando, desbloqueamos
+                // Si estamos negociando, desbloqueamos y rellenamos
+                inputGameMode.value = data.lastModo || '';
+                inputBetAmount.value = data.lastDinero || '';
                 inputGameMode.disabled = false;
                 inputBetAmount.disabled = false;
                 btnStartGame.textContent = "🎮 COMENZAR PARTIDA";
-                // (La validación normal se encargará de habilitarlo si hay datos)
+                btnStartGame.classList.remove('waiting-cancel');
+                btnStartGame.style.backgroundColor = "";
+                btnStartGame.style.pointerEvents = "";
+                
+                // Actualizar validación para ver si el botón debe habilitarse
+                validarNegociacion();
             }
 
             // 5. Ir a la vista correcta según el estado
@@ -1559,6 +1650,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
             console.log("Conexión recuperada y chat reactivado.");
         });
+
+        // --- EVENTOS DE CONFIRMACIÓN DE PARTIDA ---
+        socket.on('confirmar_partida', (data) => {
+            document.getElementById('confirm-modo').textContent = data.modo;
+            document.getElementById('confirm-apuesta').textContent = data.monto;
+            document.getElementById('match-confirm-modal').classList.remove('hidden');
+        });
+
+        socket.on('confirmacion_rechazada', () => {
+            document.getElementById('match-confirm-modal').classList.add('hidden');
+            alert("⚠️ Alguien rechazó la confirmación de la partida.");
+            if (btnStartGame) {
+                btnStartGame.textContent = "🎮 COMENZAR PARTIDA";
+                btnStartGame.disabled = false;
+                btnStartGame.classList.remove('waiting-cancel');
+                btnStartGame.classList.add('enabled');
+                btnStartGame.style.backgroundColor = "";
+                btnStartGame.style.pointerEvents = "";
+            }
+        });
+
+        socket.on('rival_cancelo_inicio', () => {
+            alert("⚠️ El rival canceló su voto para iniciar.");
+            if (btnStartGame) {
+                btnStartGame.textContent = "🎮 COMENZAR PARTIDA";
+                btnStartGame.disabled = false;
+                btnStartGame.classList.remove('waiting-cancel');
+                btnStartGame.classList.add('enabled');
+                btnStartGame.style.backgroundColor = "";
+                btnStartGame.style.pointerEvents = "";
+            }
+        });
+
+        const btnAcceptMatch = document.getElementById('btn-accept-match');
+        const btnRejectMatch = document.getElementById('btn-reject-match');
+        if (btnAcceptMatch) {
+            btnAcceptMatch.addEventListener('click', () => {
+                socket.emit('confirmar_partida_resp', { acepta: true });
+                btnAcceptMatch.disabled = true;
+                btnAcceptMatch.textContent = "Esperando...";
+            });
+        }
+        if (btnRejectMatch) {
+            btnRejectMatch.addEventListener('click', () => {
+                socket.emit('confirmar_partida_resp', { acepta: false });
+                document.getElementById('match-confirm-modal').classList.add('hidden');
+            });
+        }
     }
 
     if (btnWin && btnLose && btnConfirmResult) {
@@ -1853,6 +1992,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert(data.error);
             }
         } catch (e) {
+            console.error(e);
             alert("Error eliminando sorteo");
         }
     };
